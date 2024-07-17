@@ -68,15 +68,26 @@ pub fn parse_tagged_attribute(group: &Group, prefix: &str) -> Result<Option<Vec<
                             if p.as_char() == '=' =>
                         {
                             stream.next();
-                            if let Some(TokenTree::Literal(lit)) = stream.next() {
-                                result.push(ParsedAttribute::Property(key, lit));
-
-                                match stream.next() {
-                                    Some(TokenTree::Punct(p)) if p.as_char() == ',' => {}
-                                    None => {}
-                                    x => {
-                                        return Err(Error::custom_at_opt_token("Expected `,`", x));
-                                    }
+                            let pa = match stream.next() {
+                                Some(TokenTree::Literal(lit)) => {
+                                    ParsedAttribute::Property(key, lit)
+                                }
+                                Some(TokenTree::Ident(ident)) => {
+                                    ParsedAttribute::PropertyIdent(key, ident)
+                                }
+                                x => {
+                                    return Err(Error::custom_at_opt_token(
+                                        "Expected literal or identifier",
+                                        x,
+                                    ))
+                                }
+                            };
+                            result.push(pa);
+                            match stream.next() {
+                                Some(TokenTree::Punct(p)) if p.as_char() == ',' => {}
+                                None => {}
+                                x => {
+                                    return Err(Error::custom_at_opt_token("Expected `,`", x));
                                 }
                             }
                         }
@@ -104,14 +115,17 @@ pub enum ParsedAttribute {
     Tag(Ident),
     /// A property, created by parsing `#[prefix(foo = "bar")]`
     Property(Ident, Literal),
+    /// A property, created by parsing `#[prefix(foo = bar)]`
+    PropertyIdent(Ident, Ident),
 }
 
 #[test]
 fn test_parse_tagged_attribute() {
-    let group: Group = match crate::token_stream("[prefix(result, foo = \"bar\", baz)]").next() {
-        Some(TokenTree::Group(group)) => group,
-        x => panic!("Unexpected token {:?}", x),
-    };
+    let group: Group =
+        match crate::token_stream("[prefix(result, foo = \"bar\", baz, foo = bar)]").next() {
+            Some(TokenTree::Group(group)) => group,
+            x => panic!("Unexpected token {:?}", x),
+        };
 
     let attributes = parse_tagged_attribute(&group, "prefix").unwrap().unwrap();
     let mut iter = attributes.into_iter();
@@ -133,6 +147,13 @@ fn test_parse_tagged_attribute() {
     match iter.next() {
         Some(ParsedAttribute::Tag(i)) => {
             assert_eq!(i.to_string(), String::from("baz"));
+        }
+        x => panic!("Unexpected attribute: {:?}", x),
+    }
+    match iter.next() {
+        Some(ParsedAttribute::PropertyIdent(key, val)) => {
+            assert_eq!(key.to_string(), String::from("foo"));
+            assert_eq!(val.to_string(), String::from("bar"));
         }
         x => panic!("Unexpected attribute: {:?}", x),
     }
